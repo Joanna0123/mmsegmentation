@@ -6,9 +6,12 @@ from functools import partial
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from timm.models.registry import register_model
 from timm.models.vision_transformer import _cfg
+from ..builder import BACKBONES
+from mmseg.utils import get_root_logger
+from mmcv.runner import load_checkpoint
 
-from pvt_sample_block import Block_sample, Block_sample_share, build_attention_sample_share
-from pvt_sr_block import Block_sr, SpatialReduction_Conv33
+from .pvt_sample_block import Block_sample, Block_sample_share, build_attention_sample_share
+from .pvt_sr_block import Block_sr, SpatialReduction_Conv33
 
 
 __all__ = [
@@ -163,7 +166,8 @@ class PatchEmbed_Conv33_stage1(nn.Module):
         x = self.relu(self.norm2(self.conv2(x)))
         x = self.relu(self.norm3(self.conv3(x)))
 
-        H, W = H // self.patch_size[0], W // self.patch_size[1]
+        #H, W = H // self.patch_size[0], W // self.patch_size[1]
+        H, W = 193, 193
         _, C, _, _ = x.shape
         x = x.view(B, C, H * W).transpose(1, 2).contiguous()
 
@@ -193,7 +197,8 @@ class PatchEmbed_Conv33(nn.Module):
 
         x = self.relu(self.norm(self.conv(x)))
 
-        H, W = H // self.patch_size[0], W // self.patch_size[1]
+#        H, W = H // self.patch_size[0], W // self.patch_size[1]
+        H,W = 97,97
         _, C, _, _ = x.shape
         x = x.view(B, C, H * W).transpose(1, 2).contiguous()
 
@@ -220,11 +225,18 @@ class PyramidVisionTransformer(nn.Module):
                                            embed_dim=embed_dims[2])
             self.patch_embed4 = PatchEmbed(img_size=img_size // 16, patch_size=2, in_chans=embed_dims[2],
                                            embed_dim=embed_dims[3])
+#        elif patchembed_type == 'conv33':
+#            self.patch_embed1 = PatchEmbed_Conv33_stage1(img_size=img_size, in_chans=in_chans, embed_dim=embed_dims[0], #embed_dim1=embed_dims[0] // 2)
+#            self.patch_embed2 = PatchEmbed_Conv33(img_size=img_size // 4, in_chans=embed_dims[0], embed_dim=embed_dims[1], stride=2)
+#            self.patch_embed3 = PatchEmbed_Conv33(img_size=img_size // 8, in_chans=embed_dims[1], embed_dim=embed_dims[2], stride=1)
+#            self.patch_embed4 = PatchEmbed_Conv33(img_size=img_size // 16, in_chans=embed_dims[2], embed_dim=embed_dims[3],stride=1)
+
         elif patchembed_type == 'conv33':
-            self.patch_embed1 = PatchEmbed_Conv33_stage1(img_size=img_size, in_chans=in_chans, embed_dim=embed_dims[0], embed_dim1=embed_dims[0] // 2)
-            self.patch_embed2 = PatchEmbed_Conv33(img_size=img_size // 4, in_chans=embed_dims[0], embed_dim=embed_dims[1], stride=2)
-            self.patch_embed3 = PatchEmbed_Conv33(img_size=img_size // 8, in_chans=embed_dims[1], embed_dim=embed_dims[2], stride=1)
-            self.patch_embed4 = PatchEmbed_Conv33(img_size=img_size // 8, in_chans=embed_dims[2], embed_dim=embed_dims[3],stride=1)
+            self.patch_embed1 = PatchEmbed_Conv33_stage1(img_size=769, in_chans=in_chans, embed_dim=embed_dims[0], embed_dim1=embed_dims[0] // 2)
+            self.patch_embed2 = PatchEmbed_Conv33(img_size=193, in_chans=embed_dims[0], embed_dim=embed_dims[1], stride=2)
+            self.patch_embed3 = PatchEmbed_Conv33(img_size=97, in_chans=embed_dims[1], embed_dim=embed_dims[2], stride=1)
+            self.patch_embed4 = PatchEmbed_Conv33(img_size=97, in_chans=embed_dims[2], embed_dim=embed_dims[3],stride=1)
+
 
         if block_type == 'pvt':
             # pos_embed
@@ -287,9 +299,11 @@ class PyramidVisionTransformer(nn.Module):
 
             # cls_token
             self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dims[3]))
+
+            #修改了sample的尺寸
         elif block_type == 'sample':
             self.block1 = nn.ModuleList([Block_sample(
-                pos_type=pos_type, fea_size=(769 // 4, 769 // 4),
+                pos_type=pos_type, fea_size=(193, 193),
                 dim=embed_dims[0], num_heads=num_heads[0], mlp_ratio=mlp_ratios[0], qkv_bias=qkv_bias, qk_scale=qk_scale,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
                 sr_ratio=sr_ratios[0])
@@ -297,7 +311,7 @@ class PyramidVisionTransformer(nn.Module):
 
             cur += depths[0]
             self.block2 = nn.ModuleList([Block_sample(
-                pos_type=pos_type, fea_size=(769 // 8, 769 // 8),
+                pos_type=pos_type, fea_size=(97, 97),
                 dim=embed_dims[1], num_heads=num_heads[1], mlp_ratio=mlp_ratios[1], qkv_bias=qkv_bias, qk_scale=qk_scale,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
                 sr_ratio=sr_ratios[1])
@@ -305,7 +319,7 @@ class PyramidVisionTransformer(nn.Module):
 
             cur += depths[1]
             self.block3 = nn.ModuleList([Block_sample(
-                pos_type=pos_type, fea_size=(769 // 8, 769 // 8),
+                pos_type=pos_type, fea_size=(97, 97),
                 dim=embed_dims[2], num_heads=num_heads[2], mlp_ratio=mlp_ratios[2], qkv_bias=qkv_bias, qk_scale=qk_scale,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
                 sr_ratio=sr_ratios[2])
@@ -313,7 +327,7 @@ class PyramidVisionTransformer(nn.Module):
 
             cur += depths[2]
             self.block4 = nn.ModuleList([Block_sample(
-                pos_type=pos_type, fea_size=(769 // 8, 769 // 8),
+                pos_type=pos_type, fea_size=(97, 97),
                 dim=embed_dims[3], num_heads=num_heads[3], mlp_ratio=mlp_ratios[3], qkv_bias=qkv_bias, qk_scale=qk_scale,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
                 sr_ratio=sr_ratios[3])
@@ -429,7 +443,7 @@ class PyramidVisionTransformer(nn.Module):
             self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
         # classification head
-        self.head = nn.Linear(embed_dims[3], num_classes) if num_classes > 0 else nn.Identity()
+        #self.head = nn.Linear(embed_dims[3], num_classes) if num_classes > 0 else nn.Identity()
 
         # init weights
         if block_type == 'pvt':
@@ -448,7 +462,11 @@ class PyramidVisionTransformer(nn.Module):
                 trunc_normal_(self.pos_embed3, std=.02)
                 trunc_normal_(self.pos_embed4, std=.02)
         self.apply(self._init_weights)
-
+    def init_weights(self, pretrained=None):
+        if isinstance(pretrained, str):
+            logger = get_root_logger()
+            load_checkpoint(self, pretrained, map_location='cpu', strict=False, logger=logger)
+    
     def reset_drop_path(self, drop_path_rate):
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(self.depths))]
         cur = 0
@@ -555,6 +573,7 @@ class PyramidVisionTransformer(nn.Module):
             for blk in self.block1:
                 x = blk(x, H, W)
             x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
+  
 
             # stage 2
             x, (H, W) = self.patch_embed2(x)
@@ -564,6 +583,7 @@ class PyramidVisionTransformer(nn.Module):
             for blk in self.block2:
                 x = blk(x, H, W)
             x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
+          
 
             # stage 3
             x, (H, W) = self.patch_embed3(x)
@@ -573,7 +593,8 @@ class PyramidVisionTransformer(nn.Module):
             for blk in self.block3:
                 x = blk(x, H, W)
             x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
-
+          
+            
             # stage 4
             x, (H, W) = self.patch_embed4(x)
             # cls_tokens = self.cls_token.expand(B, -1, -1)
@@ -588,8 +609,9 @@ class PyramidVisionTransformer(nn.Module):
             x = x.view(B, H, W, C)
             x = x.permute(0, 3, 1, 2)
 
-            x = self.avgpool(x).view(x.size()[0], -1)
-
+            #x = self.avgpool(x).view(x.size()[0], -1)
+    
+            
             return x
         elif self.block_type == 'sample_share':
             # stage 1
@@ -729,9 +751,9 @@ class PyramidVisionTransformer(nn.Module):
 
     def forward(self, x):
         x = self.forward_features(x)
-        x = self.head(x)
+#        x = self.head(x)
 
-        return x
+        return [x]
 
 
 def _conv_filter(state_dict, patch_size=16):
@@ -904,14 +926,14 @@ def pvt_tiny_sample_absolute_patchembedconv33(pretrained=False, **kwargs):
 
     return model
 
-@register_model
-def pvt_tiny_sample_relative_patchembedconv33(pretrained=False, **kwargs):
-    model = PyramidVisionTransformer(
-        block_type='sample', pos_type='rel', patchembed_type='conv33',
-        patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 5, 8], mlp_ratios=[8, 8, 4, 4], qkv_bias=True,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[2, 2, 2, 2], sr_ratios=[8, 4, 2, 1],
-        # drop_rate=0.0, drop_path_rate=0.1)
-        **kwargs)
+#@register_model
+#def pvt_tiny_sample_relative_patchembedconv33(pretrained=False, **kwargs):
+#    model = PyramidVisionTransformer(
+#        block_type='sample', pos_type='rel', patchembed_type='conv33',
+#        patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 5, 8], mlp_ratios=[8, 8, 4, 4], qkv_bias=True,
+#        norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[2, 2, 2, 2], sr_ratios=[8, 4, 2, 1],
+#        # drop_rate=0.0, drop_path_rate=0.1)
+#        **kwargs)
     model.default_cfg = _cfg()
     # if pretrained:
     #     checkpoint = torch.hub.load_state_dict_from_url(
@@ -919,8 +941,19 @@ def pvt_tiny_sample_relative_patchembedconv33(pretrained=False, **kwargs):
     #         map_location="cpu", check_hash=True
     #     )
     #     model.load_state_dict(checkpoint["model"])
+    
+#    return model
 
-    return model
+@BACKBONES.register_module()
+class pvt_tiny_sample_relative_patchembedconv33(PyramidVisionTransformer):
+    def __init__(self, **kwargs):
+        super(pvt_tiny_sample_relative_patchembedconv33, self).__init__(
+            block_type='sample', pos_type='rel', patchembed_type='conv33',
+            patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 5, 8], mlp_ratios=[8, 8, 4, 4], qkv_bias=True,
+            norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[2, 2, 2, 2], sr_ratios=[8, 4, 2, 1],**kwargs)
+            # drop_rate=0.0, drop_path_rate=0.1)
+            
+    
 
 @register_model
 def pvt_tiny_sample_relative_patchembedconv33_share(pretrained=False, **kwargs):
@@ -946,7 +979,7 @@ def pvt_tiny_sample_relative_patchembedconv33_sharetransformer(pretrained=False,
         block_type='sample_sharetransformer', pos_type='rel', patchembed_type='conv33',
         patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 5, 8], mlp_ratios=[8, 8, 4, 4], qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[2, 2, 2, 2], sr_ratios=[8, 4, 2, 1],
-        # drop_rate=0.0, drop_path_rate=0.1)
+       # drop_rate=0.0, drop_path_rate=0.1)
         **kwargs)
     model.default_cfg = _cfg()
     # if pretrained:
