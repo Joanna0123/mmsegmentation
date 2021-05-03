@@ -7,8 +7,8 @@ from .resnest import ResNeSt
 from .resnet import ResNet, ResNetV1c, ResNetV1d
 from .resnext import ResNeXt
 from .unet import UNet
-
+from .pvt import pvt_tiny_sample_relative_patchembedconv33
 __all__ = [
     'ResNet', 'ResNetV1c', 'ResNetV1d', 'ResNeXt', 'HRNet', 'FastSCNN',
-    'ResNeSt', 'MobileNetV2', 'UNet', 'CGNet', 'MobileNetV3'
+    'ResNeSt', 'MobileNetV2', 'UNet', 'CGNet', 'MobileNetV3', 'pvt_tiny_sample_relative_patchembedconv33'
 ]
